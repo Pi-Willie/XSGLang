@@ -1,0 +1,19 @@
+# Runtime dependencies for XSGLang.
+# If your system needs a specific CUDA build of torch, install that first.
+
+accelerate
+apache-tvm-ffi>=0.1.4
+fastapi
+flashinfer-python>=0.5.3
+huggingface_hub
+modelscope
+msgpack
+openai
+prompt_toolkit
+pyzmq
+quack-kernels
+safetensors
+sgl_kernel>=0.3.17.post1
+torch<2.10.0
+transformers>=4.56.0,<=4.57.3
+uvicorn
