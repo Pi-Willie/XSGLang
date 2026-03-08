@@ -1,16 +1,16 @@
-# XSGLang
+# xSGLang
 
-XSGLang is a Linux-only CUDA inference engine built for block-wise generation, branching continuations, activation hooks, and other workflows that are awkward or inefficient in a normal inference stack.
+xSGLang is a Linux-only CUDA inference engine built for block-wise generation, branching continuations, activation hooks, and other workflows that are awkward or inefficient in a normal inference stack.
 
 Standard inference engines are often fast, but they expose generation as a black box. You submit a prompt, ask for tokens, and get a completion back. That works for serving, but it becomes restrictive once you want to stop partway through generation, inspect the current state, branch from it, or run many related continuations without repeatedly rebuilding the same prefix.
 
 At the other extreme, `transformers.generate()` gives more direct access, but in practice it is a poor fit for shared-prefix, multi-block research loops. If the goal is to branch, compare trajectories, intervene on activations, or keep a whole continuation tree resident, it is easy to end up with a Python control loop that throws away most of the model's real performance.
 
-XSGLang is meant to sit in that gap. It keeps the model resident, exposes generation as bounded blocks, and makes continuation control part of the engine itself rather than something wrapped around it afterwards.
+xSGLang is meant to sit in that gap. It keeps the model resident, exposes generation as bounded blocks, and makes continuation control part of the engine itself rather than something wrapped around it afterwards.
 
 ## Block-wise generation
 
-The central idea in XSGLang is that generation does not have to be treated as one opaque stream.
+The central idea in xSGLang is that generation does not have to be treated as one opaque stream.
 
 Instead of only asking the model to generate until it finishes, you can run a bounded block such as 20, 30, or 40 tokens, inspect the result, then decide what to do next. You can continue the same state, fork it into children, or attach hooks before the next block.
 
@@ -24,9 +24,9 @@ That makes it possible to do things like:
 
 That is the main use case for this repository.
 
-## What XSGLang is for
+## What xSGLang is for
 
-XSGLang is built for inference workloads where control matters as much as raw throughput. That includes:
+xSGLang is built for inference workloads where control matters as much as raw throughput. That includes:
 
 * branching generation and search
 * shared-prefix continuation trees
@@ -39,7 +39,7 @@ The point is not to bolt more Python on top of a server. The point is to make th
 
 ## What it is built on
 
-XSGLang is a fork of [Mini-SGLang](https://github.com/sgl-project/mini-sglang), and the base runtime foundation comes from that project.
+xSGLang is a fork of [Mini-SGLang](https://github.com/sgl-project/mini-sglang), and the base runtime foundation comes from that project.
 
 Mini-SGLang provides the compact low-level serving core this fork builds on, including:
 
@@ -51,7 +51,7 @@ Mini-SGLang provides the compact low-level serving core this fork builds on, inc
 * CUDA graph decode
 * a codebase small enough to read without getting lost immediately
 
-XSGLang keeps that base and extends the control surface on top of it.
+xSGLang keeps that base and extends the control surface on top of it.
 
 ## What is different here
 
@@ -109,14 +109,14 @@ The numbers below are from local runs on `Qwen/Qwen3-0.6B` on an RTX 4080 SUPER.
 
 This is where the engine is strongest.
 
-In benchmark comparisons against rerunning Hugging Face `generate`, XSGLang landed around **2.7x to 3.1x faster** on the tested multi-block workloads:
+In benchmark comparisons against rerunning Hugging Face `generate`, xSGLang landed around **2.7x to 3.1x faster** on the tested multi-block workloads:
 
 * single stream blocks: `48.75 tok/s` vs HF `15.91 tok/s`
 * clean branch workload: `357.62 tok/s` vs HF `117.27 tok/s`
 * steering branch workload: `327.27 tok/s` vs HF `118.39 tok/s`
 * wider stress branch workload: `674.27 tok/s` vs HF `246.54 tok/s`
 
-Memory behavior was also good for a resident-KV design: XSGLang pays a large upfront reservation, but incremental allocation stayed very small while HF grew much more during generation.
+Memory behavior was also good for a resident-KV design: xSGLang pays a large upfront reservation, but incremental allocation stayed very small while HF grew much more during generation.
 
 The clearest public demo result is from `demo_branch_stress.py`:
 
@@ -133,7 +133,7 @@ The hook path works, but it is much slower than the clean path.
 
 In the steering benchmark, the steered branch case was:
 
-* XSGLang steering workload: `327.27 tok/s`
+* xSGLang steering workload: `327.27 tok/s`
 * clean branch workload: `357.62 tok/s`
 
 So that particular intervention path was only about **`1.09x`** slower than the clean branch benchmark.
@@ -148,7 +148,7 @@ The clean path stayed coherent, while the noised path degraded progressively int
 
 The short honest summary is:
 
-**XSGLang performs very well on resident, shared-prefix, multi-block branching, and much worse once CPU-side activation hooks are heavily in the loop.**
+**xSGLang performs very well on resident, shared-prefix, multi-block branching, and much worse once CPU-side activation hooks are heavily in the loop.**
 
 ## Repository layout
 
@@ -187,8 +187,8 @@ Requirements:
 Suggested setup:
 
 ```bash
-git clone https://github.com/Pi-Willie/XSGLang.git
-cd XSGLang
+git clone https://github.com/Pi-Willie/xSGLang.git
+cd xSGLang
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
