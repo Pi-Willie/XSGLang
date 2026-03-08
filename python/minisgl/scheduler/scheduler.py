@@ -1214,12 +1214,10 @@ class Scheduler(SchedulerIOMixin):
         if state.state_id not in self._state_registry:
             return
         self.decode_manager.remove_req(state)
-        page_starts = self._tracked_pages(state)
-        self.cache_manager.release_state_tracking(state)
-        self.cache_manager.unlock(state.cache_handle)
-        self.cache_manager.free_page_starts(page_starts)
-        self.table_manager.free(state.table_idx)
-        self._unregister_state(state)
+        # Manual disposal should follow the same prefix-cache ownership rules as
+        # the normal finished-request path. Otherwise we can free pages that the
+        # prefix cache still owns when a live continuation is disposed manually.
+        self._free_req_resources(state)
         state.status = ContinuationStatus.FREED
 
     def _ensure_state_position(self, state: Req, end_pos: int) -> None:

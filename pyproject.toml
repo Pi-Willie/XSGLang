@@ -44,8 +44,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.0",
-    "pytest-cov>=2.0",
     "black>=22.0",
     "flake8>=4.0",
     "mypy>=0.950",
@@ -105,19 +103,6 @@ exclude = [
     "__pycache__",
     ".pytest_cache",
     ".mypy_cache",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=minisgl",
-    "--cov-report=term-missing",
-    "--cov-report=html",
 ]
 
 [tool.mypy]
