@@ -51,7 +51,7 @@ if TRITON_GDN_AVAILABLE:
 
         acc = tl.zeros([block_c], dtype=tl.float32)
         for tap in tl.static_range(0, kernel_size - 1):
-            slot = (write_pos + tap) % kernel_size
+            slot = (write_pos + tap + 1) % kernel_size
             state_ptr = (
                 state_pool
                 + table_idx * stride_state_t

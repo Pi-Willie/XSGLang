@@ -39,6 +39,12 @@ class BaseLLMModel(ABC, BaseOP):
         return None
 
     @property
+    def supports_last_token_replay_from_prefill(self) -> bool:
+        # Standard decoder-only KV-cache models can reuse the prompt's last
+        # token as the first decode input after a prefill-only open.
+        return True
+
+    @property
     def num_layers(self) -> int:
         model = getattr(self, "model", None)
         layers = getattr(model, "layers", None)

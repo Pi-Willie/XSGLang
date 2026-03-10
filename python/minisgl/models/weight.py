@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import glob
-from typing import Dict
+from typing import Any, Dict
 
 import torch
 from tqdm import tqdm
@@ -32,10 +32,8 @@ def _shard_state_dict(
     if model_type == "qwen3_5_text":
         SPLIT_DIM_0_LIST.extend(
             [
-                ".in_proj_qkv",
-                ".in_proj_z",
-                ".in_proj_a",
-                ".in_proj_b",
+                ".qkv_proj",
+                ".in_proj",
                 ".dt_bias",
                 ".A_log",
                 ".conv1d.weight",
@@ -58,15 +56,57 @@ def _shard_state_dict(
     return shard_state_dict
 
 
+def _reorder_qwen3_5_q_proj(q_proj: torch.Tensor, *, num_heads: int, head_dim: int) -> torch.Tensor:
+    if q_proj.shape[0] != num_heads * head_dim * 2:
+        raise ValueError(
+            "Unexpected Qwen 3.5 q_proj shape:"
+            f" got leading dim {q_proj.shape[0]}, expected {num_heads * head_dim * 2}"
+        )
+    if q_proj.dim() == 2:
+        q_proj = q_proj.view(num_heads, 2, head_dim, q_proj.shape[1])
+        return torch.cat(
+            [
+                q_proj[:, 0].reshape(num_heads * head_dim, q_proj.shape[-1]),
+                q_proj[:, 1].reshape(num_heads * head_dim, q_proj.shape[-1]),
+            ],
+            dim=0,
+        )
+    if q_proj.dim() == 1:
+        q_proj = q_proj.view(num_heads, 2, head_dim)
+        return torch.cat(
+            [
+                q_proj[:, 0].reshape(num_heads * head_dim),
+                q_proj[:, 1].reshape(num_heads * head_dim),
+            ],
+            dim=0,
+        )
+    raise ValueError(f"Unsupported q_proj rank {q_proj.dim()} for Qwen 3.5 reordering")
+
+
 def _merge_state_dict(
     state_dict: Dict[str, torch.Tensor],
     *,
     model_type: str,
+    hf_config: Any | None = None,
 ) -> Dict[str, torch.Tensor]:
     filtered_state_dict: Dict[str, torch.Tensor] = {}
+    qwen3_5_num_q_heads = None
+    qwen3_5_head_dim = None
+    if model_type == "qwen3_5_text":
+        if hf_config is None:
+            raise ValueError("hf_config is required to merge Qwen 3.5 weights")
+        qwen3_5_num_q_heads = int(getattr(hf_config, "num_attention_heads"))
+        qwen3_5_head_dim = int(
+            getattr(hf_config, "head_dim", getattr(hf_config, "hidden_size") // qwen3_5_num_q_heads)
+        )
     for key in list(state_dict.keys()):
         if model_type == "qwen3_5_text" and key.count(".self_attn.q_proj"):
-            q_proj = state_dict[key]
+            assert qwen3_5_num_q_heads is not None and qwen3_5_head_dim is not None
+            q_proj = _reorder_qwen3_5_q_proj(
+                state_dict[key],
+                num_heads=qwen3_5_num_q_heads,
+                head_dim=qwen3_5_head_dim,
+            )
             k_proj = state_dict[key.replace(".q_proj", ".k_proj")]
             v_proj = state_dict[key.replace(".q_proj", ".v_proj")]
             new_key = key.replace(".q_proj", ".qkv_proj")
@@ -151,11 +191,15 @@ def load_weight(model_path: str, device: torch.device) -> Dict[str, torch.Tensor
             for name in f.keys():
                 state_dict[name] = f.get_tensor(name)
 
-    model_type = str(getattr(cached_load_hf_config(model_path), "model_type", ""))
-    if tp_info.size > 1:
-        state_dict = _shard_state_dict(state_dict, model_type=model_type)
-
-    state_dict = _merge_state_dict(state_dict, model_type=model_type)
+    hf_config = cached_load_hf_config(model_path)
+    model_type = str(getattr(hf_config, "model_type", ""))
     if model_type == "qwen3_5_text":
         state_dict = _rename_qwen3_5_state_dict(state_dict)
-    return state_dict
+        state_dict = _merge_state_dict(state_dict, model_type=model_type, hf_config=hf_config)
+        if tp_info.size > 1:
+            state_dict = _shard_state_dict(state_dict, model_type=model_type)
+        return state_dict
+
+    if tp_info.size > 1:
+        state_dict = _shard_state_dict(state_dict, model_type=model_type)
+    return _merge_state_dict(state_dict, model_type=model_type, hf_config=hf_config)

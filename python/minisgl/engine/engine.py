@@ -80,7 +80,12 @@ class Engine:
             self.model = create_model(config.model_config)
         self.model.load_state_dict(self._load_weight_state_dict(config))
         output_search_paths = []
-        for path in (config.resolved_lora_path, config.model_path, config.resolved_model_path):
+        for path in (
+            config.output_head_path,
+            config.resolved_lora_path,
+            config.model_path,
+            config.resolved_model_path,
+        ):
             if path is None or path in output_search_paths:
                 continue
             output_search_paths.append(path)

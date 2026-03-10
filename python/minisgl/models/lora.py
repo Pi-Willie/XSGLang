@@ -47,6 +47,28 @@ def _prepare_tensor(tensor: torch.Tensor) -> torch.Tensor:
         return prepared
 
 
+def _reorder_qwen3_5_q_proj_delta(
+    delta: torch.Tensor,
+    *,
+    num_local_q_heads: int,
+    head_dim: int,
+) -> torch.Tensor:
+    expected_rows = num_local_q_heads * head_dim * 2
+    if delta.shape[0] != expected_rows:
+        raise ValueError(
+            "Unexpected Qwen 3.5 q_proj LoRA delta shape:"
+            f" got leading dim {delta.shape[0]}, expected {expected_rows}"
+        )
+    delta = delta.view(num_local_q_heads, 2, head_dim, delta.shape[1])
+    return torch.cat(
+        [
+            delta[:, 0].reshape(num_local_q_heads * head_dim, delta.shape[-1]),
+            delta[:, 1].reshape(num_local_q_heads * head_dim, delta.shape[-1]),
+        ],
+        dim=0,
+    )
+
+
 def _snapshot_download_adapter(adapter_path: str) -> str:
     if os.path.isdir(adapter_path):
         return adapter_path
@@ -329,7 +351,14 @@ class LoRAManager:
             start = tp.rank * q_proj_local
             a = _to_target(a_cpu, target)
             b = _to_target(b_cpu[start : start + target.shape[0]], target)
-            target.add_(b @ a, alpha=scale)
+            delta = b @ a
+            if is_qwen3_5:
+                delta = _reorder_qwen3_5_q_proj_delta(
+                    delta,
+                    num_local_q_heads=div_even(cfg.num_qo_heads, tp.size),
+                    head_dim=cfg.head_dim,
+                )
+            target.add_(delta, alpha=scale)
             return
         if suffix == "self_attn.k_proj":
             if is_qwen3_5:

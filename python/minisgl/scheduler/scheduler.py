@@ -612,24 +612,43 @@ class Scheduler(SchedulerIOMixin):
             active_cap_mask=active_cap_mask,
             metadata=metadata,
         )
-        # Opening a continuation is a KV residency operation, not an implicit decode.
-        plan = self._compile_step_plan(
-            reqs=[req],
-            phase=StepPhase.PREFILL,
-            requested_outputs=req.requested_outputs,
-            sample_next_token=False,
+        original_device_len = req.device_len
+        prefill_device_len = original_device_len
+        replay_last_token = bool(
+            getattr(self.engine.model, "supports_last_token_replay_from_prefill", True)
         )
-        batch = Batch(reqs=[req], phase="prefill")
-        batch.bind_plan(plan)
-        with self.engine_stream_ctx:
-            forward_input = self._prepare_batch(batch)
-            forward_output = self._forward(forward_input)
-        self._finalize_batch(
-            batch=forward_input.batch,
-            forward_output=forward_output,
-            emit_reply=False,
-        )
-        self.decode_manager.remove_req(req)
+        if not replay_last_token and original_device_len > 1:
+            prefill_device_len = original_device_len - 1
+            req.device_len = prefill_device_len
+
+        effective_prefill_tokens = max(0, prefill_device_len - req.cached_len)
+        if effective_prefill_tokens > 0:
+            # Opening a continuation is a cache residency operation, not an implicit decode.
+            # For recurrent-state models we only prefill through the penultimate prompt token so
+            # the first explicit decode step consumes the prompt tail exactly once.
+            plan = self._compile_step_plan(
+                reqs=[req],
+                phase=StepPhase.PREFILL,
+                requested_outputs=req.requested_outputs,
+                sample_next_token=False,
+            )
+            batch = Batch(reqs=[req], phase="prefill")
+            batch.bind_plan(plan)
+            with self.engine_stream_ctx:
+                forward_input = self._prepare_batch(batch)
+                forward_output = self._forward(forward_input)
+            self._finalize_batch(
+                batch=forward_input.batch,
+                forward_output=forward_output,
+                emit_reply=False,
+            )
+            self.decode_manager.remove_req(req)
+        else:
+            # A full prompt-cache hit leaves no new tokens to prefill. Skip the
+            # forward pass entirely and just register the continuation state.
+            self._register_state(req)
+
+        req.device_len = original_device_len
         self._prime_prefilled_continuation_for_decode(req)
         return req
 

@@ -32,6 +32,7 @@ class EngineConfig:
     num_page_override: int | None = None  # if not None, will override the number of pages
     distributed_init_addr: str | None = None
     lora_path: str | None = None
+    output_head_path: str | None = None
     engine_cap_mask: int = DEFAULT_ENGINE_CAP_MASK
 
     @cached_property

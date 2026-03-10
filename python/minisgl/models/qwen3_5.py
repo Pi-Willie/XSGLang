@@ -27,7 +27,6 @@ from minisgl.utils import div_even, nvtx_annotate
 from .base import BaseLLMModel
 from .qwen3_5_kernels import (
     TRITON_GDN_AVAILABLE,
-    depthwise_conv1d_decode_ring_update,
     fused_sigmoid_gating_delta_rule_decode,
 )
 
@@ -813,13 +812,43 @@ class Qwen3_5LinearAttention(BaseOP):
         state_cache: Qwen3_5StateCache,
     ) -> torch.Tensor:
         if batch.phase == "decode" and mixed_qkv.shape[0] == len(batch.reqs):
-            return depthwise_conv1d_decode_ring_update(
-                hidden=mixed_qkv.view(len(batch.reqs), self.conv_dim),
-                state_pool=state_cache.conv_state_pool(self.layer_id),
-                write_positions=state_cache.conv_write_pos_pool(self.layer_id),
-                table_indices=batch.req_table_indices_i32,
-                weight=self._conv_kernel(),
-            ).reshape(-1, self.conv_dim)
+            table_indices = batch.req_table_indices_i32.to(dtype=torch.long)
+            state_pool = state_cache.conv_state_pool(self.layer_id)
+            write_positions = state_cache.conv_write_pos_pool(self.layer_id)
+            conv_state = state_pool.index_select(0, table_indices)
+            row_write_positions = write_positions.index_select(0, table_indices)
+            if torch.any(row_write_positions != 0):
+                slots = torch.arange(
+                    self.conv_kernel_size,
+                    device=conv_state.device,
+                    dtype=torch.long,
+                )
+                gather_idx = (row_write_positions[:, None, None].to(torch.long) + slots[None, None, :]) % (
+                    self.conv_kernel_size
+                )
+                conv_state = torch.gather(
+                    conv_state,
+                    dim=2,
+                    index=gather_idx.expand(conv_state.shape[0], conv_state.shape[1], self.conv_kernel_size),
+                )
+
+            full_state = torch.cat(
+                [conv_state, mixed_qkv.view(len(batch.reqs), self.conv_dim, 1)],
+                dim=-1,
+            )
+            conv_out = F.conv1d(
+                full_state.to(dtype=self.conv1d.weight.dtype),
+                self.conv1d.weight,
+                groups=self.conv_dim,
+            )
+            conv_out = F.silu(conv_out[:, :, -1:]).to(dtype=mixed_qkv.dtype)
+            state_pool.index_copy_(
+                0,
+                table_indices,
+                full_state[:, :, -self.conv_kernel_size :].to(dtype=state_pool.dtype),
+            )
+            write_positions.index_fill_(0, table_indices, 0)
+            return conv_out.transpose(1, 2).reshape(-1, self.conv_dim)
 
         out = torch.empty_like(mixed_qkv)
         for req, (start, end) in zip(batch.reqs, batch.req_slices):
@@ -1140,6 +1169,12 @@ class Qwen3_5ForCausalLM(BaseLLMModel):
     @property
     def num_layers(self) -> int:
         return self.model.num_layers
+
+    @property
+    def supports_last_token_replay_from_prefill(self) -> bool:
+        # Qwen 3.5 linear-attention layers keep recurrent state that cannot
+        # safely "replay" the last prompt token after a full prefill.
+        return False
 
     def create_state_cache(
         self,
